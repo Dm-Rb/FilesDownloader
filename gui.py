@@ -269,13 +269,13 @@ class MainWindow(QWidget):
         layout.addSpacing(20)
 
 
-        # ---------------- START BUTTON ----------------
+        # ---------------- START/CANCEL BUTTON ----------------
         start_layout = QHBoxLayout()
 
         self.start_button = QPushButton("Начать")
         self.start_button.setFixedWidth(260)
 
-        self.start_button.clicked.connect(self.start_processing)
+        self.start_button.clicked.connect(self.on_start_cancel_clicked)
 
         start_layout.addStretch()
         start_layout.addWidget(self.start_button)
@@ -311,6 +311,19 @@ class MainWindow(QWidget):
 
         self.log_output.append(f"Папка для скачивания: {directory}")
 
+    def on_start_cancel_clicked(self):
+        """
+        Handle start/cancel button click.
+        If download is in progress, cancel it. Otherwise, start downloading.
+        """
+        # Check if a worker is running
+        if self.worker is not None and self.worker.is_running:
+            # Cancel the download
+            self.cancel_processing()
+        else:
+            # Start the download
+            self.start_processing()
+
     def start_processing(self):
         try:
             delimiter = self.delimiter_input.text().strip()
@@ -340,14 +353,52 @@ class MainWindow(QWidget):
 
             # ✅ ПОДКЛЮЧАЕМ ВСЕ СИГНАЛЫ СРАЗУ ПОСЛЕ СОЗДАНИЯ
             self.worker.progress.connect(self.update_progress)
-            self.worker.log_item.connect(self.add_log_item)  # ← ВАЖНО
+            self.worker.log_item.connect(self.add_log_item)
             self.worker.result.connect(self.show_result)
+            self.worker.cancelled.connect(self.on_download_cancelled)  # ✅ Новый сигнал
             self.worker.log.connect(self.add_error_log)
+            self.worker.finished.connect(self.on_download_finished)
             # ✅ ЗАПУСК
             self.worker.start()
 
+            # ✅ Update button text to "Отмена"
+            self.start_button.setText("Отмена")
+
+            # Disable other controls during download
+            self.dir_button.setEnabled(False)
+            self.delimiter_input.setEnabled(False)
+            self.radio_skip.setEnabled(False)
+            self.radio_no_skip.setEnabled(False)
+
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", str(e))
+
+    def cancel_processing(self):
+        """Cancel the ongoing download process."""
+        if self.worker is not None and self.worker.is_running:
+            self.log_output.append("\n<span style='color:orange'>Отмена скачивания...</span>")
+            self.worker.cancel_download()
+
+    def on_download_finished(self):
+        """
+        Called when the download worker finishes (either normally or by cancellation).
+        Restores UI to normal state.
+        """
+        # ✅ Update button text back to "Начать"
+        self.start_button.setText("Начать")
+
+        # ✅ Enable controls again
+        self.dir_button.setEnabled(True)
+        self.delimiter_input.setEnabled(True)
+        self.radio_skip.setEnabled(True)
+        self.radio_no_skip.setEnabled(True)
+
+    def on_download_cancelled(self):
+        """
+        Called when the download is cancelled by user.
+        Does NOT show the result summary.
+        """
+        self.log_output.append("\n<span style='color:orange'>Загрузка отменена пользователем.</span>")
 
     def add_log_item(self, url, success):
         color = "green" if success else "red"
@@ -363,6 +414,7 @@ class MainWindow(QWidget):
         self.progress.setValue(value)
 
     def show_result(self, total, errors_count):
+        """Show result summary only if download completed normally (not cancelled)."""
         success = total - errors_count
 
         self.log_output.append("")  # отступ
@@ -388,42 +440,76 @@ class DownloadWorker(QThread):
     finished = Signal()
     log_item = Signal(str, bool)  # (url, success)
     result = Signal(int, int)  # total, errors_count
+    cancelled = Signal()  # ✅ Новый сигнал для отмены
 
     def __init__(self, data, download_dir):
         super().__init__()
         self.data = data
         self.download_dir = download_dir
+        self.downloader = None
+        self.is_running = False
+        self.was_cancelled = False  # ✅ Флаг отмены
 
     def run(self):
-        asyncio.run(self.async_run())
+        """Run the async download process."""
+        self.is_running = True
+        try:
+            asyncio.run(self.async_run())
+        finally:
+            self.is_running = False
+            self.finished.emit()
 
     async def async_run(self):
-        downloader = FileDownloader()
-        downloader.set_download_dir(self.download_dir)
+        """Async download process with cancellation support."""
+        self.downloader = FileDownloader()
+        self.downloader.set_download_dir(self.download_dir)
 
         total = len(self.data)
-        downloader.log_callback = lambda url, ok: self.log_item.emit(url, ok)
+        self.downloader.log_callback = lambda url, ok: self.log_item.emit(url, ok)
 
         async def monitor():
-            """Отслеживание прогресса"""
-            while downloader.process_items_count < total:
-                self.progress.emit(downloader.process_items_count)
+            """Monitor download progress."""
+            while self.downloader.process_items_count < total and not self.downloader.is_cancelled:
+                self.progress.emit(self.downloader.process_items_count)
                 await asyncio.sleep(0.1)
 
         monitor_task = asyncio.create_task(monitor())
 
-        await downloader.download_files(self.data)
+        try:
+            await self.downloader.download_files(self.data)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # Gracefully cancel monitor task
+            if not monitor_task.done():
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
 
-        monitor_task.cancel()
+            # Final progress update
+            self.progress.emit(self.downloader.process_items_count)
 
-        # финальный прогресс
-        self.progress.emit(total)
+            total = self.downloader.total_items_count
+            errors_count = len(self.downloader.errors)
 
-        total = downloader.total_items_count
-        errors_count = len(downloader.errors)
-        self.result.emit(total, errors_count)
+            # ✅ Проверяем был ли процесс отменён
+            if self.downloader.is_cancelled:
+                self.was_cancelled = True
+                self.cancelled.emit()  # Отправляем сигнал отмены
+            else:
+                # Показываем результат только если не был отменён
+                self.result.emit(total, errors_count)
 
-        if downloader.errors:
-            for err in downloader.errors:
-                self.log.emit(err)
+            if self.downloader.errors:
+                for err in self.downloader.errors:
+                    self.log.emit(err)
 
+    def cancel_download(self):
+        """
+        Cancel the download process.
+        Sets the cancellation flag in the downloader.
+        """
+        if self.downloader is not None:
+            self.downloader.cancel()
