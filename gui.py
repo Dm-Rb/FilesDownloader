@@ -167,7 +167,7 @@ class MainWindow(QWidget):
         self.tab_compress = self._create_compress_tab()
 
         self.tabs.addTab(self.tab_download, "Скачать файлы по ссылкам")
-        self.tabs.addTab(self.tab_compress, "Скомпрессировать файлы")
+        self.tabs.addTab(self.tab_compress, "Упаковать файлы в архив")
 
         self.tabs.setCurrentIndex(0)
 
@@ -209,13 +209,9 @@ class MainWindow(QWidget):
         btn.setFixedWidth(150)
         btn.clicked.connect(self.download_open_file)
 
-        layout.addStretch()
         layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addStretch()
 
-        screen.setLayout(layout)
-        # Placeholder for future functionality
-        placeholder = QLabel("Функционал сжатия файлов будет добавлен позже")
+        placeholder = QLabel("Поддерживаемые файлы в формате .csv, .xls, .xlsx")
         placeholder.setStyleSheet("color: gray; font-size: 14px;")
 
         placeholder_layout = QHBoxLayout()
@@ -603,53 +599,40 @@ class MainWindow(QWidget):
         tab = QWidget()
         layout = QVBoxLayout()
 
-        # Top button
-        self.compress_select_folder_btn = QPushButton(
-            "Выбрать папку с файлами"
-        )
-        self.compress_select_folder_btn.setFixedWidth(200)
-        self.compress_select_folder_btn.clicked.connect(
-            self.compress_select_folder
-        )
+        # Use stacked layout for different screens within this tab
+        self.compress_stack_layout = QVBoxLayout()
+        layout.addLayout(self.compress_stack_layout)
 
-        top_layout = QHBoxLayout()
-        top_layout.addStretch()
-        top_layout.addWidget(self.compress_select_folder_btn)
-        top_layout.addStretch()
+        self.compress_start_screen = self._create_compress_start_screen()
 
-        layout.addSpacing(20)
-        layout.addLayout(top_layout)
-        layout.addSpacing(20)
-
-        # Placeholder for future functionality
-        placeholder = QLabel("Функционал сжатия файлов будет добавлен позже")
-        placeholder.setStyleSheet("color: gray; font-size: 14px;")
-
-        placeholder_layout = QHBoxLayout()
-        placeholder_layout.addStretch()
-        placeholder_layout.addWidget(placeholder)
-        placeholder_layout.addStretch()
-
-        layout.addLayout(placeholder_layout)
-        layout.addStretch()
+        # Show start screen initially
+        self.compress_stack_layout.addWidget(self.compress_start_screen)
 
         tab.setLayout(layout)
         return tab
 
+    def _create_compress_start_screen(self):
+        """Create start screen for compress tab."""
+        screen = QWidget()
+        layout = QVBoxLayout()
+
+        btn = QPushButton("Выбрать папку")
+        btn.setFixedWidth(150)
+
+        btn.clicked.connect(self.compress_select_folder)
+
+        layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        placeholder = QLabel("Функционал сжатия файлов будет добавлен позже")
+        placeholder.setStyleSheet("color: gray; font-size: 14px;")
+        layout.addWidget(placeholder, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        layout.addStretch()
+
+        screen.setLayout(layout)
+        return screen
+
     def compress_select_folder(self):
-        """Select folder for compression."""
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "Выберите папку с файлами"
-        )
+        pass
 
-        if not folder:
-            return
 
-        # Placeholder message
-        QMessageBox.information(
-            self,
-            "Информация",
-            f"Выбрана папка: {folder}\n\n"
-            "Функционал сжатия файлов будет реализован позже."
-        )
