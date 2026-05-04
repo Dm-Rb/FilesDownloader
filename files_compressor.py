@@ -44,7 +44,6 @@ class Compressor:
                 self.files_count += 1
 
     def reset_values(self):
-        self.path2dir: Optional[str] = None
         self.pack: Optional[int] = None
         self.all_files_count: Optional[int] = None
         self.files_count: Optional[int] = 0
