@@ -22,7 +22,6 @@ class UniversalTableReader:
         self.headers_column: bool = True  # flag..True - continue first row.
 
     def read_file(self, file_path, **kwargs) -> None:
-
         path = Path(file_path)
 
         if not path.exists():
@@ -37,10 +36,20 @@ class UniversalTableReader:
             self.data_frame = self._read_excel(path, **kwargs)
 
         else:
+
             raise ValueError(f"Unsupported file type: {suffix}")
 
     def _read_excel(self, path, **kwargs):
-        return pd.read_excel(path, engine="openpyxl", header=None, **kwargs)
+        suffix = path.suffix.lower()
+
+        if suffix == ".xlsx":
+            return pd.read_excel(path, engine="openpyxl", header=None, **kwargs)
+
+        elif suffix == ".xls":
+            return pd.read_excel(path, engine="xlrd", header=None, **kwargs)
+
+        else:
+            raise ValueError(f"Unsupported Excel format: {suffix}")
 
     def _read_csv(self, path):
         separators = [",", ";", "\t", "|"]

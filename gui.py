@@ -798,7 +798,7 @@ class MainWindow(QWidget):
         self.compress_selected_folder = None
         self.compressor.path2dir = None
         self.compress_archive_name_input.clear()
-        self.compress_max_files_input.setValue(100)
+        self.compress_max_files_input.setValue(10000)
         self.compress_log_output.clear()
         self.compress_progress.setValue(0)
 

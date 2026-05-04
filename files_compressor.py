@@ -46,14 +46,14 @@ class Compressor:
             for file_path in files:
 
                 if self._cancelled:
-                    return  # остановка
+                    return  # stop
 
-                # Добавляем файл в архив (сохраняя только имя файла)
+                # add file to archive
                 file_name = Path(file_path).name
                 zipf.write(file_path, arcname=file_name)
                 self.files_count += 1
 
-                # Вызываем callback для логирования
+                #  callback for log
                 if self.log_callback:
                     self.log_callback(file_name)
 
