@@ -41,6 +41,7 @@ class Compressor:
             for file_path in files:
                 # Добавляем файл в архив (сохраняя только имя файла)
                 zipf.write(file_path, arcname=Path(file_path).name)
+                self.files_count += 1
 
     def reset_values(self):
         self.path2dir: Optional[str] = None
@@ -59,6 +60,5 @@ class Compressor:
         for i in range(len(files)):
             archive_path = os.path.join(self.path2dir, f"{self.archive_name}_{str(i)}.zip")
             self._pack_files(files[i], archive_path)
-        self.reset_values()
         return
 

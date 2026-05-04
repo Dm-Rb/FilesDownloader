@@ -1,11 +1,12 @@
 from qtpy.QtWidgets import (
     QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
     QFileDialog, QMessageBox, QTableView, QLabel, QMenu, QTabWidget,
-    QRadioButton, QButtonGroup, QLineEdit, QTextEdit, QProgressBar
+    QRadioButton, QButtonGroup, QLineEdit, QTextEdit, QProgressBar, QSpinBox
 )
 from qtpy.QtCore import QAbstractTableModel, Qt, QThread, Signal
 from qtpy.QtGui import QColor
 from table_reader import UniversalTableReader
+from files_compressor import Compressor
 import asyncio
 from files_downloader import FileDownloader
 
@@ -139,6 +140,43 @@ class DownloadWorker(QThread):
 
 
 # ============================================================================
+# COMPRESS WORKER (THREAD)
+# ============================================================================
+class CompressorWorker(QThread):
+    """Worker thread for handling file compression."""
+
+    progress = Signal(int)
+    log = Signal(str)
+    finished = Signal()
+    result = Signal(int, int)  # total, errors_count
+    cancelled = Signal()
+
+    def __init__(self, compressor: Compressor):
+        super().__init__()
+        self.compressor = compressor
+        self.is_running = False
+        self.was_cancelled = False
+
+    def run(self):
+        """Run the compression process."""
+        self.is_running = True
+        try:
+            self.compressor.run()
+            self.log.emit(f"Архивирование завершено успешно!")
+            self.result.emit(self.compressor.all_files_count, 0)
+        except Exception as e:
+            self.log.emit(f"Ошибка при архивировании: {str(e)}")
+            self.result.emit(0, 1)
+        finally:
+            self.is_running = False
+            self.finished.emit()
+
+    def cancel_compression(self):
+        """Cancel the compression process."""
+        self.was_cancelled = True
+
+
+# ============================================================================
 # MAIN WINDOW WITH TABS
 # ============================================================================
 class MainWindow(QWidget):
@@ -153,6 +191,9 @@ class MainWindow(QWidget):
         # Initialize data structures
         self.reader = UniversalTableReader()
         self.worker = None
+        self.compress_worker = None
+        self.compressor = Compressor()
+        self.compress_selected_folder = None
 
         # Create main layout
         main_layout = QVBoxLayout()
@@ -604,6 +645,7 @@ class MainWindow(QWidget):
         layout.addLayout(self.compress_stack_layout)
 
         self.compress_start_screen = self._create_compress_start_screen()
+        self.compress_params_screen = self._create_compress_params_screen()
 
         # Show start screen initially
         self.compress_stack_layout.addWidget(self.compress_start_screen)
@@ -618,12 +660,11 @@ class MainWindow(QWidget):
 
         btn = QPushButton("Выбрать папку")
         btn.setFixedWidth(150)
-
         btn.clicked.connect(self.compress_select_folder)
 
         layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        placeholder = QLabel("Функционал сжатия файлов будет добавлен позже")
+        placeholder = QLabel("Выберите папку с файлами для архивирования")
         placeholder.setStyleSheet("color: gray; font-size: 14px;")
         layout.addWidget(placeholder, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -632,7 +673,247 @@ class MainWindow(QWidget):
         screen.setLayout(layout)
         return screen
 
+    def _create_compress_params_screen(self):
+        """Create parameters screen for compress tab with progress and logs."""
+        screen = QWidget()
+        layout = QVBoxLayout()
+
+        # -------- BACK BUTTON (TOP LEFT) --------
+        top_layout = QHBoxLayout()
+
+        self.compress_back_params_btn = QPushButton("Назад")
+        self.compress_back_params_btn.setFixedWidth(100)
+        self.compress_back_params_btn.clicked.connect(self.compress_go_back)
+
+        top_layout.addWidget(self.compress_back_params_btn)
+        top_layout.addStretch()
+
+        layout.addLayout(top_layout)
+        layout.addSpacing(20)
+
+        # -------- ARCHIVE NAME INPUT (CENTER) --------
+        archive_name_layout = QHBoxLayout()
+
+        archive_name_label = QLabel("Имя архива(ов):")
+
+        self.compress_archive_name_input = QLineEdit()
+        self.compress_archive_name_input.setFixedWidth(200)
+        self.compress_archive_name_input.setPlaceholderText("archive")
+
+        archive_name_layout.addStretch()
+        archive_name_layout.addWidget(archive_name_label)
+        archive_name_layout.addSpacing(10)
+        archive_name_layout.addWidget(self.compress_archive_name_input)
+        archive_name_layout.addStretch()
+
+        layout.addLayout(archive_name_layout)
+        layout.addSpacing(20)
+
+        # -------- MAX FILES PER ARCHIVE INPUT (CENTER) --------
+        max_files_layout = QHBoxLayout()
+
+        max_files_label = QLabel("Макс. количество файлов в архиве:")
+
+        self.compress_max_files_input = QSpinBox()
+        self.compress_max_files_input.setFixedWidth(100)
+        self.compress_max_files_input.setMinimum(1)
+        self.compress_max_files_input.setMaximum(10000)
+        self.compress_max_files_input.setValue(100)
+
+        max_files_layout.addStretch()
+        max_files_layout.addWidget(max_files_label)
+        max_files_layout.addSpacing(10)
+        max_files_layout.addWidget(self.compress_max_files_input)
+        max_files_layout.addStretch()
+
+        layout.addLayout(max_files_layout)
+        layout.addSpacing(30)
+
+        # -------- START BUTTON --------
+        start_layout = QHBoxLayout()
+
+        self.compress_start_button = QPushButton("Начать")
+        self.compress_start_button.setFixedWidth(260)
+        self.compress_start_button.clicked.connect(
+            self.compress_on_start_cancel_clicked
+        )
+
+        start_layout.addStretch()
+        start_layout.addWidget(self.compress_start_button)
+        start_layout.addStretch()
+
+        layout.addLayout(start_layout)
+        layout.addSpacing(20)
+
+        # -------- PROGRESS --------
+        self.compress_progress = QProgressBar()
+        self.compress_progress.setValue(0)
+        self.compress_progress.setEnabled(False)
+
+        layout.addWidget(self.compress_progress)
+        layout.addSpacing(10)
+
+        # -------- LOG --------
+        self.compress_log_output = QTextEdit()
+        self.compress_log_output.setReadOnly(True)
+
+        layout.addWidget(self.compress_log_output)
+
+        screen.setLayout(layout)
+        return screen
+
+    # -------- COMPRESS TAB METHODS --------
     def compress_select_folder(self):
-        pass
+        """Open folder selection dialog and set up compression."""
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Выберите папку с файлами"
+        )
 
+        if not directory:
+            return
 
+        self.compress_selected_folder = directory
+        self.compressor.path2dir = directory
+
+        self._switch_compress_screen(self.compress_params_screen)
+
+    def compress_go_back(self):
+        """Go back to start screen."""
+        self.compress_selected_folder = None
+        self.compressor.path2dir = None
+        self.compress_archive_name_input.clear()
+        self.compress_max_files_input.setValue(100)
+        self.compress_log_output.clear()
+        self.compress_progress.setValue(0)
+
+        self._switch_compress_screen(self.compress_start_screen)
+
+    def compress_on_start_cancel_clicked(self):
+        """Handle start/cancel button click."""
+        if self.compress_worker is not None and self.compress_worker.is_running:
+            self.compress_cancel_processing()
+        else:
+            self.compress_start_processing()
+
+    def compress_start_processing(self):
+        """Start file compression process."""
+        try:
+            archive_name = self.compress_archive_name_input.text().strip()
+            max_files = self.compress_max_files_input.value()
+
+            if not archive_name:
+                QMessageBox.warning(
+                    self,
+                    "Ошибка",
+                    "Пожалуйста, введите имя архива"
+                )
+                return
+
+            if max_files <= 0:
+                QMessageBox.warning(
+                    self,
+                    "Ошибка",
+                    "Количество файлов должно быть больше нуля"
+                )
+                return
+
+            if not self.compress_selected_folder:
+                QMessageBox.warning(
+                    self,
+                    "Ошибка",
+                    "Папка не выбрана"
+                )
+                return
+
+            self.compressor.archive_name = archive_name
+            self.compressor.pack = max_files
+
+            self.compress_progress.setEnabled(True)
+            self.compress_progress.setMaximum(100)
+            self.compress_progress.setValue(0)
+
+            self.compress_log_output.clear()
+            self.compress_log_output.append(
+                f"Начинаю архивирование папки: {self.compress_selected_folder}\n"
+            )
+            self.compress_log_output.append(
+                f"Имя архива: {self.compressor.archive_name}\n"
+            )
+            self.compress_log_output.append(
+                f"Макс. файлов в архиве: {self.compressor.pack}\n\n"
+            )
+
+            # Create worker
+            self.compress_worker = CompressorWorker(self.compressor)
+
+            # Connect signals
+            self.compress_worker.log.connect(self.compress_add_log)
+            self.compress_worker.result.connect(self.compress_show_result)
+            self.compress_worker.finished.connect(self.compress_on_finished)
+
+            # Start worker
+            self.compress_worker.start()
+
+            # Update button
+            self.compress_start_button.setText("Отмена")
+
+            # Disable controls
+            self.compress_archive_name_input.setEnabled(False)
+            self.compress_max_files_input.setEnabled(False)
+            self.compress_back_params_btn.setEnabled(False)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", str(e))
+
+    def compress_cancel_processing(self):
+        """Cancel ongoing compression."""
+        if self.compress_worker is not None and self.compress_worker.is_running:
+            self.compress_log_output.append(
+                "\n<span style='color:orange'>Отмена архивирования...</span>"
+            )
+            self.compress_worker.cancel_compression()
+
+    def compress_on_finished(self):
+        """Called when worker finishes."""
+        self.compress_start_button.setText("Начать")
+
+        self.compress_archive_name_input.setEnabled(True)
+        self.compress_max_files_input.setEnabled(True)
+        self.compress_back_params_btn.setEnabled(True)
+
+    def compress_add_log(self, text):
+        """Add log message."""
+        self.compress_log_output.append(
+            f'<span style="color:black">{text}</span>'
+        )
+
+    def compress_show_result(self, total, errors_count):
+        """Show compression result."""
+        self.compress_log_output.append("")
+
+        if errors_count == 0:
+            self.compress_log_output.append(
+                f'<span style="color:green">'
+                f'Готово. Архивировано файлов: {total}.'
+                f'</span>'
+            )
+        else:
+            self.compress_log_output.append(
+                f'<span style="color:red">'
+                f'Ошибка при архивировании. Обработано файлов: {total}. '
+                f'Ошибок: {errors_count}.'
+                f'</span>'
+            )
+
+    def _switch_compress_screen(self, new_screen):
+        """Switch compress tab screen."""
+        # Clear existing layout
+        while self.compress_stack_layout.count():
+            item = self.compress_stack_layout.takeAt(0)
+            if item.widget():
+                item.widget().hide()
+
+        # Add new screen
+        self.compress_stack_layout.addWidget(new_screen)
+        new_screen.show()
