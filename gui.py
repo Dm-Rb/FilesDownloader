@@ -158,23 +158,23 @@ class CompressorWorker(QThread):
         self.was_cancelled = False
 
     def run(self):
-        """Run the compression process."""
         self.is_running = True
         try:
-            # Reset values before starting
-            # self.compressor.reset_values()
-
-            # Set log callback to emit file names
             self.compressor.log_callback = self._on_file_packed
 
-            # Run compression
             self.compressor.run()
 
-            self.log.emit(f"Архивирование завершено успешно!")
-            self.result.emit(self.compressor.all_files_count, 0)
+            if self.compressor._cancelled:
+                self.was_cancelled = True
+                self.cancelled.emit()
+            else:
+                self.log.emit("Архивирование завершено успешно!")
+                self.result.emit(self.compressor.all_files_count, 0)
+
         except Exception as e:
             self.log.emit(f"Ошибка при архивировании: {str(e)}")
             self.result.emit(0, 1)
+
         finally:
             self.is_running = False
             self.finished.emit()
@@ -187,8 +187,8 @@ class CompressorWorker(QThread):
         self.log.emit(f"Добавлено в архив: {file_name}")
 
     def cancel_compression(self):
-        """Cancel the compression process."""
-        self.was_cancelled = True
+        if self.compressor:
+            self.compressor.cancel()
 
 
 # ============================================================================
@@ -806,10 +806,16 @@ class MainWindow(QWidget):
 
     def compress_on_start_cancel_clicked(self):
         """Handle start/cancel button click."""
+
         if self.compress_worker is not None and self.compress_worker.is_running:
             self.compress_cancel_processing()
         else:
             self.compress_start_processing()
+
+    def compress_on_cancelled(self):
+        self.compress_log_output.append(
+            "\n<span style='color:orange'>Архивирование отменено пользователем.</span>"
+        )
 
     def compress_start_processing(self):
         """Start file compression process."""
@@ -862,7 +868,6 @@ class MainWindow(QWidget):
             compressor = Compressor()
             compressor.path2dir = self.compress_selected_folder
             compressor.archive_name = archive_name_value
-            print()
             compressor.pack = int(max_files)
 
             # Create worker
@@ -873,6 +878,7 @@ class MainWindow(QWidget):
             self.compress_worker.log.connect(self.compress_add_log)
             self.compress_worker.result.connect(self.compress_show_result)
             self.compress_worker.finished.connect(self.compress_on_finished)
+            self.compress_worker.cancelled.connect(self.compress_on_cancelled)
 
             # Start worker
             self.compress_worker.start()
@@ -890,7 +896,7 @@ class MainWindow(QWidget):
 
     def compress_cancel_processing(self):
         """Cancel ongoing compression."""
-        if self.compress_worker is not None and self.compress_worker.is_running:
+        if self.compress_worker and self.compress_worker.is_running:
             self.compress_log_output.append(
                 "\n<span style='color:orange'>Отмена архивирования...</span>"
             )
