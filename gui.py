@@ -161,7 +161,15 @@ class CompressorWorker(QThread):
         """Run the compression process."""
         self.is_running = True
         try:
+            # Reset values before starting
+            # self.compressor.reset_values()
+
+            # Set log callback to emit file names
+            self.compressor.log_callback = self._on_file_packed
+
+            # Run compression
             self.compressor.run()
+
             self.log.emit(f"Архивирование завершено успешно!")
             self.result.emit(self.compressor.all_files_count, 0)
         except Exception as e:
@@ -170,6 +178,13 @@ class CompressorWorker(QThread):
         finally:
             self.is_running = False
             self.finished.emit()
+
+    def _on_file_packed(self, file_name: str):
+        """Called when a file is packed into archive."""
+        # Emit progress
+        self.progress.emit(self.compressor.files_count)
+        # Emit log with file name
+        self.log.emit(f"Добавлено в архив: {file_name}")
 
     def cancel_compression(self):
         """Cancel the compression process."""
@@ -801,7 +816,6 @@ class MainWindow(QWidget):
         try:
             archive_name = self.compress_archive_name_input.text().strip()
             max_files = self.compress_max_files_input.value()
-
             if not archive_name:
                 QMessageBox.warning(
                     self,
@@ -826,11 +840,11 @@ class MainWindow(QWidget):
                 )
                 return
 
-            self.compressor.archive_name = archive_name
-            self.compressor.pack = max_files
+            # Store parameters for worker
+            archive_name_value = archive_name
+            max_files_value = max_files
 
             self.compress_progress.setEnabled(True)
-            self.compress_progress.setMaximum(100)
             self.compress_progress.setValue(0)
 
             self.compress_log_output.clear()
@@ -838,16 +852,24 @@ class MainWindow(QWidget):
                 f"Начинаю архивирование папки: {self.compress_selected_folder}\n"
             )
             self.compress_log_output.append(
-                f"Имя архива: {self.compressor.archive_name}\n"
+                f"Имя архива: {archive_name_value}\n"
             )
             self.compress_log_output.append(
-                f"Макс. файлов в архиве: {self.compressor.pack}\n\n"
+                f"Макс. файлов в архиве: {max_files_value}\n\n"
             )
 
+            # Create new compressor instance for this operation
+            compressor = Compressor()
+            compressor.path2dir = self.compress_selected_folder
+            compressor.archive_name = archive_name_value
+            print()
+            compressor.pack = int(max_files)
+
             # Create worker
-            self.compress_worker = CompressorWorker(self.compressor)
+            self.compress_worker = CompressorWorker(compressor)
 
             # Connect signals
+            self.compress_worker.progress.connect(self.compress_update_progress)
             self.compress_worker.log.connect(self.compress_add_log)
             self.compress_worker.result.connect(self.compress_show_result)
             self.compress_worker.finished.connect(self.compress_on_finished)
@@ -881,6 +903,13 @@ class MainWindow(QWidget):
         self.compress_archive_name_input.setEnabled(True)
         self.compress_max_files_input.setEnabled(True)
         self.compress_back_params_btn.setEnabled(True)
+
+    def compress_update_progress(self, value):
+        """Update progress bar."""
+        if self.compress_worker and self.compress_worker.compressor.all_files_count:
+            max_value = self.compress_worker.compressor.all_files_count
+            self.compress_progress.setMaximum(max_value)
+            self.compress_progress.setValue(value)
 
     def compress_add_log(self, text):
         """Add log message."""

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Callable
 import zipfile
 import os
 from pathlib import Path
@@ -12,6 +12,7 @@ class Compressor:
         self.all_files_count: Optional[int] = None
         self.files_count: Optional[int] = 0
         self.archive_name: Optional[str] = None
+        self.log_callback: Optional[Callable[[str], None]] = None
 
     def _split_into_chunks_batch(self) -> list[list]:
         if not self.path2dir:
@@ -36,12 +37,17 @@ class Compressor:
             stop_i += self.pack
         return result
 
-    def _pack_files(self, files:list, archive_name:str):
+    def _pack_files(self, files: list, archive_name: str):
         with zipfile.ZipFile(os.path.join(self.path2dir, archive_name), 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_path in files:
                 # Добавляем файл в архив (сохраняя только имя файла)
-                zipf.write(file_path, arcname=Path(file_path).name)
+                file_name = Path(file_path).name
+                zipf.write(file_path, arcname=file_name)
                 self.files_count += 1
+
+                # Вызываем callback для логирования
+                if self.log_callback:
+                    self.log_callback(file_name)
 
     def reset_values(self):
         self.pack: Optional[int] = None
@@ -50,6 +56,8 @@ class Compressor:
         self.archive_name: Optional[str] = None
 
     def run(self):
+        print(self.path2dir)
+        print(self.pack)
         files: list[list] = self._split_into_chunks_batch()
         if len(files) == 1:
             archive_path = os.path.join(self.path2dir, f"{self.archive_name}.zip")
@@ -59,5 +67,5 @@ class Compressor:
         for i in range(len(files)):
             archive_path = os.path.join(self.path2dir, f"{self.archive_name}_{str(i)}.zip")
             self._pack_files(files[i], archive_path)
+        self.reset_values()
         return
-
