@@ -17,6 +17,7 @@ class UniversalTableReader:
         self.data_frame: pd.DataFrame or None = None   # pandas object is created when a file is read, and all interaction occurs with it.
         self.filenames_column_index: int or None = None # index of the column that contains the rows for generating the file name
         self.urls_column_index: int or None = None  # index of the column that contains the rows for generating the file name
+        self.brands_column_index: int or None = None  # колонка бренда (опционально)
         self.download_dir: str or None = None  # dir path for downloaded files
         self.urls_delimiter: str or None = None  # delimiter for cvs document
         self.headers_column: bool = True  # flag..True - continue first row.
@@ -69,18 +70,22 @@ class UniversalTableReader:
         return pd.read_csv(path, encoding=self.encoding)
 
     def preparing_data(self) -> List[DownloadableItemDict]:
-        # Prepares data from user-defined columns.
         result = []
 
         if self.urls_column_index is None:
             raise ValueError("urls_column_index не задан")
 
         urls_column = self.data_frame.iloc[:, self.urls_column_index]
-
-        if self.filenames_column_index is not None:
-            filenames_column = self.data_frame.iloc[:, self.filenames_column_index]
-        else:
-            filenames_column = None
+        filenames_column = (
+            self.data_frame.iloc[:, self.filenames_column_index]
+            if self.filenames_column_index is not None
+            else None
+        )
+        brands_column = (
+            self.data_frame.iloc[:, self.brands_column_index]
+            if self.brands_column_index is not None
+            else None
+        )
 
         start_i = 1 if self.headers_column else 0
 
@@ -90,29 +95,50 @@ class UniversalTableReader:
             if not isinstance(urls_value, str):
                 continue
 
+            # filename
             if filenames_column is None:
                 filenames_value = str(i)
             else:
                 filenames_value = filenames_column[i]
-                if not isinstance(filenames_value, str):
+
+                # проверка NaN / пустоты
+                if pd.isna(filenames_value):
                     filenames_value = str(i)
+                else:
+                    filenames_value = str(filenames_value)
+
             filenames_value = self.sanitize_filename(filenames_value)
+            # brand (НОРМАЛИЗАЦИЯ)
+            if brands_column is not None:
+                brand_value = brands_column[i]
+                if not isinstance(brand_value, str):
+                    brand_value = "unknown"
+                brand_value = self.sanitize_filename(brand_value)
+            else:
+                brand_value = None
+
             split_urls = [
                 u.strip() for u in urls_value.split(self.urls_delimiter) if u.strip()
             ]
 
             for j, url in enumerate(split_urls):
                 ext = Path(url).suffix
+
                 filename = (
                     f"{filenames_value}_{j + 1}{ext}"
                     if len(split_urls) > 1
                     else f"{filenames_value}{ext}"
                 )
 
-                result.append({
+                item = {
                     "file_name": filename,
                     "url": url
-                })
+                }
+
+                if brand_value:
+                    item["brand"] = brand_value
+
+                result.append(item)
 
         return result
 

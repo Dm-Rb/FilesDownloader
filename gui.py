@@ -22,6 +22,7 @@ class PandasModel(QAbstractTableModel):
         self._df = df
         self.url_col = None
         self.name_col = None
+        self.brand_col = None
 
     def rowCount(self, parent=None):
         return self._df.shape[0]
@@ -38,6 +39,8 @@ class PandasModel(QAbstractTableModel):
                 return QColor("#cce5ff")
             if index.column() == self.name_col:
                 return QColor("#d4edda")
+            if index.column() == self.brand_col:
+                return QColor("#fff3cd")  #  жёлтый
 
         return None
 
@@ -49,6 +52,8 @@ class PandasModel(QAbstractTableModel):
                 return f"{name} [URL]"
             if section == self.name_col:
                 return f"{name} [NAME]"
+            if section == self.brand_col:
+                return f"{name} [BRAND]"
 
             return name
 
@@ -465,6 +470,7 @@ class MainWindow(QWidget):
 
         url_action = menu.addAction("Использовать как ссылки")
         name_action = menu.addAction("Использовать как имена файлов")
+        brand_action = menu.addAction("Использовать как бренд")
 
         action = menu.exec(header.mapToGlobal(pos))
 
@@ -477,13 +483,17 @@ class MainWindow(QWidget):
             self.download_model.name_col = col
             self.reader.filenames_column_index = col
 
+        elif action is brand_action:
+            self.download_model.brand_col = col
+            self.reader.brands_column_index = col
+
         self.download_table.viewport().update()
 
     def download_process_data(self):
         """Move to process screen."""
         self.reader.urls_column_index = self.download_model.url_col
         self.reader.filenames_column_index = self.download_model.name_col
-
+        self.reader.brands_column_index = self.download_model.brand_col
         self._switch_download_screen(self.download_process_screen)
 
     def download_go_back(self):
@@ -539,7 +549,11 @@ class MainWindow(QWidget):
             data = self.reader.preparing_data()
 
             data = [
-                {"url": item["url"], "file_name": item["file_name"]}
+                {
+                    "url": item["url"],
+                    "file_name": item["file_name"],
+                    "brand": item.get("brand")
+                }
                 for item in data
             ]
 
